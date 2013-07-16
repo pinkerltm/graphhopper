@@ -33,6 +33,7 @@ public class ElevationAnalyzer
     private int ascend;
     private int descend;
     private int ascendDistance;
+    private int levelDistance;
     private int descendDistance;
     private int totalDistance;
 
@@ -127,6 +128,8 @@ public class ElevationAnalyzer
         descend=0;
         ascendDistance=0;
         descendDistance=0;
+        levelDistance=0;
+        totalDistance =0;
 
         maxIncline=0;
         maxDecline=0;
@@ -148,7 +151,10 @@ public class ElevationAnalyzer
                 delta = ele - lastEle;
                 incline = 100*delta/distance;
 
-                if( delta > 0 ) {
+                totalDistance += distance;
+                if( delta == 0 )
+                    levelDistance += distance;
+                else if( delta > 0 ) {
                     ascend += delta;
                     ascendDistance += distance;
                 }
@@ -203,6 +209,10 @@ public class ElevationAnalyzer
 
     public int getDescendDistance() {
         return descendDistance;
+    }
+
+    public int getLevelDistance() {
+        return levelDistance;
     }
 
     public int getTotalIncline() {
