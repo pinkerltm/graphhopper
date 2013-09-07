@@ -32,6 +32,7 @@ import com.graphhopper.util.StopWatch;
 import java.io.*;
 import javax.xml.stream.XMLStreamException;
 
+import com.graphhopper.util.shapes.BBox;
 import gnu.trove.list.TLongList;
 import gnu.trove.list.array.TLongArrayList;
 
@@ -64,12 +65,16 @@ public class OSMReader
     private boolean enableInstructions = true;
     protected long expectedCap = 100;
 
+    private BBox bounds;
+
     public OSMReader( GraphStorage storage, long expectedCap )
     {
         this.graphStorage = storage;
         helper = new OSMReaderHelper(graphStorage, expectedCap);
         osmNodeIdToBarrierMap = new GHLongIntBTree(200);
         this.expectedCap = expectedCap;
+
+        bounds = new BBox(Double.MAX_VALUE, Double.MIN_VALUE,Double.MAX_VALUE, Double.MIN_VALUE);
     }
 
     public OSMReader setWorkerThreads( int numOfWorkers )
@@ -264,7 +269,7 @@ public class OSMReader
         if (is3D())
         {
             // todo: do this controlled by region to limit memory usage
-            geometryAccess.initDem(demLocation, graphStorage.getBounds());
+            geometryAccess.initDem(demLocation, bounds);
 
             // fill elevations for graph nodes
             geometryAccess.initializeElevations();
@@ -399,6 +404,12 @@ public class OSMReader
         if (isInBounds(node))
         {
             helper.addNode(node);
+
+            // find our own bounds as graph ignores outside pillar nodes
+            bounds.minLat = Math.min( bounds.minLat, node.getLat() );
+            bounds.maxLat = Math.max( bounds.maxLat, node.getLat() );
+            bounds.minLon = Math.min( bounds.minLon, node.getLon() );
+            bounds.maxLon = Math.max( bounds.maxLon, node.getLon() );
 
             // analyze node tags for barriers
             if (node.hasTags())

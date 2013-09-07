@@ -23,6 +23,7 @@ public class DemArea
     DemTile[][] tiles;
 
     int resolution;
+    double spacing;
     int tileCount;
     int tileRes;
 
@@ -30,10 +31,11 @@ public class DemArea
 
     public DemArea(String demLocation, int cacheSize, double fromLon, double fromLat, double toLon, double toLat)
     {
-        this.fromLon = fromLon;
-        this.fromLat = fromLat;
-        this.toLon = toLon;
-        this.toLat = toLat;
+        // add a tolerance border for rounding errors due to int conversion of coordinates in graph
+        this.fromLon = fromLon - 0.000001;
+        this.fromLat = fromLat - 0.000001;
+        this.toLon = toLon + 0.000001;
+        this.toLat = toLat + 0.000001;
 
         this.demLocation = demLocation;
         File demDir = new File( demLocation );
@@ -44,6 +46,7 @@ public class DemArea
         tileCount = 5;
 
         tileRes = resolution * tileCount;
+        spacing = 1.0 / (double)resolution;
 
         lonBase = (int) Math.floor(fromLon / tileCount) * tileCount;
         latBase = (int) Math.floor(fromLat / tileCount) * tileCount;
@@ -72,7 +75,38 @@ public class DemArea
         return true;
     }
 
+    /**
+     * Get interpolated elevation from DEM
+     * @param lat
+     * @param lon
+     * @return
+     */
     public int get( double lat, double lon )
+    {
+        if (lat < fromLat || lon < fromLon || lat > toLat || lon > toLon)
+        {
+            System.out.println( "WARNING: Node " + lat + "," + lon + " is outside of bounds.");
+            return 0;
+        }
+
+        double xFrac = (lon * resolution) % 1;
+        double yFrac = (lat * resolution) % 1;
+
+        int ele = (int) (getElevation(lat, lon) * (1-xFrac) * (1-yFrac)
+                        + getElevation(lat, lon + spacing) * xFrac * (1-yFrac)
+                        + getElevation(lat + spacing, lon) * (1-xFrac) * yFrac
+                        + getElevation(lat + spacing, lon + spacing) * xFrac * yFrac);
+
+        return ele;
+    }
+
+    /**
+     * Get closest elevation value for a location
+     * @param lat
+     * @param lon
+     * @return
+     */
+    private int getElevation( double lat, double lon )
     {
         final double lonRel = lon - lonBase;
         final double latRel = lat - latBase;

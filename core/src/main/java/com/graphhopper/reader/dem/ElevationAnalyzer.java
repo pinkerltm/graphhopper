@@ -4,6 +4,7 @@ import com.graphhopper.reader.GeometryAccess;
 import com.graphhopper.reader.OSMWay;
 import com.graphhopper.util.DistanceCalc;
 import com.graphhopper.util.Helper;
+import com.graphhopper.util.PointList;
 import gnu.trove.list.TIntList;
 import gnu.trove.list.TLongList;
 import gnu.trove.list.array.TIntArrayList;
@@ -18,8 +19,9 @@ public class ElevationAnalyzer
     public static final int LON = 1;
     public static final int ELEVATION = 2;
     public static final int DISTANCE = 3;
+    public static final int ANGLE = 4;
 
-    public static final int RECORD_SIZE = 4;
+    public static final int RECORD_SIZE = 5;
 
     private static DistanceCalc distCalc = new DistanceCalc();
 
@@ -40,9 +42,22 @@ public class ElevationAnalyzer
     private int totalIncline;
     private int avgIncline;
     private int avgDecline;
-    private int maxIncline;
-    private int maxDecline;
 
+    private int contAscend;
+    private int contAscendDistance;
+    private int contDescend;
+    private int contDescendDistance;
+
+    private int maxAngle;
+
+    public ElevationAnalyzer( GeometryAccess geometryAccess )
+    {
+        this.geometryAccess = geometryAccess;
+    }
+
+    public ElevationAnalyzer()
+    {
+    }
 
     /**
      * Initialize the Analyzer with the way data.
@@ -76,10 +91,14 @@ public class ElevationAnalyzer
 
             // calculate distances to previous node
             if( i == 0 )
+            {
                 nodes.add( 0 );
-            else {
+                nodes.add(0);
+            } else
+            {
                 double distance = distCalc.calcDist( lastLat, lastLon, lat, lon );
                 nodes.add( (int) distance );
+                nodes.add(0);
                 totalDistance += distance;
             }
             lastLat = lat;
@@ -87,9 +106,69 @@ public class ElevationAnalyzer
         }
     }
 
+    /**
+     * Initialize the Analyzer with a point list.
+     *
+     * @param points
+     */
+    public void initialize( PointList points )
+    {
+        count = points.getSize();
+        nodes = new TIntArrayList(2 * RECORD_SIZE * count);
+
+        totalDistance = 0;
+        maxAngle = 0;
+
+        double prevLat = 0;
+        double prevLon = 0;
+        double lastLat = 0;
+        double lastLon = 0;
+        double lat = 0;
+        double lon = 0;
+
+        for (int i = 0; i < count; i++)
+        {
+            lat = points.getLatitude(i);
+            lon = points.getLongitude(i);
+
+            nodes.add(Helper.degreeToInt(lat));
+            nodes.add(Helper.degreeToInt(lon));
+            nodes.add((int) points.getElevation(i));
+
+            // calculate distances to previous node
+            if (i == 0)
+            {
+                // distance and curve angle
+                nodes.add(0);
+                nodes.add(0);
+            } else
+            {
+                double distance = distCalc.calcDist(lastLat, lastLon, lat, lon);
+                nodes.add((int) distance);
+                nodes.add(0);
+                totalDistance += distance;
+                if( i > 1 )
+                {
+                    final double ax = (lastLon - prevLon);
+                    final double ay = (lastLat - prevLat);
+                    final double bx = (lon - lastLon);
+                    final double by = (lat - lastLat);
+
+                    int angle = (int) Math.toDegrees(Math.acos((ax * bx + ay * by) / (Math.sqrt(ax * ax + ay * ay) * Math.sqrt(bx * bx + by * by))));
+                    nodes.set((i-1)*RECORD_SIZE + ANGLE, angle);
+                    maxAngle = Math.max( maxAngle, Math.abs(angle));
+                }
+            }
+            prevLat = lastLat;
+            prevLon = lastLon;
+            lastLat = lat;
+            lastLon = lon;
+        }
+    }
+
     public void interpolate( int step )
     {
-        int[] node = new int[4];
+        int[] node = new int[RECORD_SIZE];
 
         for( int i = 1; i < count; i++ ) {
             int index = i* RECORD_SIZE;
@@ -114,7 +193,7 @@ public class ElevationAnalyzer
                     nodes.insert( index, node );
                     i++;
                     count++;
-                    index += 4;
+                    index += RECORD_SIZE;
                 }
             }
         }
@@ -131,55 +210,103 @@ public class ElevationAnalyzer
         levelDistance=0;
         totalDistance =0;
 
-        maxIncline=0;
-        maxDecline=0;
+        contAscend = 0;
+        contAscendDistance = 0;
+        contDescend = 0;
+        contDescendDistance = 0;
+
         avgIncline=0;
         avgDecline=0;
 
-        int lastEle = nodes.get( ELEVATION );
-        int index;
-        int ele;
-        int distance;
-        int delta;
-        int incline;
-        for( int i = 1; i < count; i++ ) {
-            index = i* RECORD_SIZE;
-            ele = nodes.get( index + ELEVATION );
-            distance = nodes.get( index + DISTANCE );
-            totalDistance += distance;
-            if( distance > 0 ) {
-                delta = ele - lastEle;
-                incline = 100*delta/distance;
+        int partAscend = 0;
+        int partAscendDistance = 0;
+        int partDescend = 0;
+        int partDescendDistance = 0;
 
-                totalDistance += distance;
+        int lastEle = nodes.get( ELEVATION );
+        for (int i = 1; i < count; i++)
+        {
+            int index = i * RECORD_SIZE;
+            int ele = nodes.get(index + ELEVATION);
+            int distance = nodes.get(index + DISTANCE);
+            totalDistance += distance;
+            if (distance > 0)
+            {
+                int delta = ele - lastEle;
+                int incline = 100 * delta / distance;
+
                 if( delta == 0 )
+                {
                     levelDistance += distance;
-                else if( delta > 0 ) {
+
+                    partAscendDistance += distance;
+                    partDescendDistance += distance;
+                } else if (delta > 0)
+                {
                     ascend += delta;
                     ascendDistance += distance;
+
+                    partAscend += delta;
+                    partAscendDistance += distance;
+
+                    // end of continuous ascend
+                    checkContinuousDescend(partDescend, partDescendDistance);
+                    partDescend = 0;
+                    partDescendDistance = 0;
                 }
                 if( delta < 0 ) {
                     descend += delta;
                     descendDistance += distance;
+
+                    partDescend += delta;
+                    partDescendDistance += distance;
+
+                    // end of continuous ascend
+                    checkContinuousAscend(partAscend, partAscendDistance);
+                    partAscend = 0;
+                    partAscendDistance = 0;
                 }
 
-                // minimum length for local incline is 5m to avoid extreme values caused by rounding errors
-                if( distance > 5 && maxIncline < incline )
-                    maxIncline=incline;
-                if( distance > 5 && maxDecline > incline )
-                    maxDecline = incline;
             }
             lastEle = ele;
         }
-        if( totalDistance > 0)
+        checkContinuousAscend(partAscend, partAscendDistance);
+        checkContinuousDescend(partDescend, partDescendDistance);
+
+        if (totalDistance > 20)
+        {
             totalIncline = 100*(ascend+descend)/totalDistance;
-        if( ascendDistance > 0 )
+        }
+        if (ascendDistance > 20)
+        {
             avgIncline = 100*ascend / ascendDistance;
-        if( descendDistance > 0 )
+        }
+        if (descendDistance > 20)
+        {
             avgDecline = 100*descend / descendDistance;
     }
+    }
 
-    public int getAscend() {
+    private void checkContinuousAscend( int partAscend, int partAscendDistance )
+    {
+        if( partAscendDistance > contAscendDistance )
+        {
+            contAscend = partAscend;
+            contAscendDistance = partAscendDistance;
+        }
+    }
+
+    private void checkContinuousDescend( int partDescend, int partDescendDistance )
+    {
+        if( partDescendDistance > contDescendDistance )
+        {
+            contDescend = partDescend;
+            contDescendDistance = partDescendDistance;
+        }
+    }
+
+    public int getAscend()
+    {
         return ascend;
     }
 
@@ -195,15 +322,8 @@ public class ElevationAnalyzer
         return avgIncline;
     }
 
-    public int getMaxIncline() {
-        return maxIncline;
-    }
-
-    public int getMaxDecline() {
-        return maxDecline;
-    }
-
-    public int getAscendDistance() {
+    public int getAscendDistance()
+    {
         return ascendDistance;
     }
 
@@ -221,5 +341,30 @@ public class ElevationAnalyzer
 
     public int getAverageDecline() {
         return avgDecline;
+    }
+
+    public int getContinuousAscend()
+    {
+        return contAscend;
+    }
+
+    public int getContinuousAscendDistance()
+    {
+        return contAscendDistance;
+    }
+
+    public int getContinuousDescend()
+    {
+        return contDescend;
+    }
+
+    public int getContinuousDescendDistance()
+    {
+        return contDescendDistance;
+    }
+
+    public int getMaxAngle()
+    {
+        return maxAngle;
     }
 }

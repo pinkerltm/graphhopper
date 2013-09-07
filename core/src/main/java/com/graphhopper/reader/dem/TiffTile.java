@@ -134,21 +134,21 @@ public class TiffTile extends DemTile
                 ips.close();
 
                 System.out.println( " download done. Converting." );
-            }
-            catch( FileNotFoundException e ) {
+            } catch (FileNotFoundException e)
+            {
+                return writeSeaLevelTile();
+            } catch (IOException e)
+            {
+                if (e.getMessage().contains("503"))
+                {
                 // missing file usually means sea area
-                try {
-                    FileOutputStream out = new FileOutputStream( getFile() );
-                    out.write( "Meer".getBytes() );
-                    out.close();
-                    seaLevel = true;
-                    return true;
+                    return writeSeaLevelTile();
+                } else
+                {
+                    throw new RuntimeException("Can't download " + urlString, e);
                 }
-                catch( IOException ex ) {
-                    throw new RuntimeException( "Can't write sea level file " + getFile(), ex );
-                }
-            }
-            catch( Exception e ) {
+            } catch (Exception e)
+            {
                 throw new RuntimeException( "Can't download " + urlString, e );
             }
         }
@@ -199,6 +199,21 @@ public class TiffTile extends DemTile
             localDem.delete();
 
         return true;
+    }
+
+    private boolean writeSeaLevelTile()
+    {
+        try
+        {
+            FileOutputStream out = new FileOutputStream(getFile());
+            out.write("Meer".getBytes());
+            out.close();
+            seaLevel = true;
+            return true;
+        } catch (IOException ex)
+        {
+            throw new RuntimeException("Can't write sea level file " + getFile(), ex);
+        }
     }
 
     @Override
