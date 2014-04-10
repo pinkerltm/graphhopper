@@ -26,8 +26,11 @@ import com.graphhopper.storage.index.LocationIndex;
 import com.graphhopper.storage.index.LocationIndexTree;
 import com.graphhopper.util.EdgeIteratorState;
 import com.graphhopper.util.PointList;
+import com.graphhopper.util.StopWatch;
 import java.io.*;
 import java.util.HashMap;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 
 /**
@@ -40,6 +43,8 @@ import java.util.HashMap;
  */
 public class IdfReader
 {
+    private final Logger logger = LoggerFactory.getLogger(getClass());
+    
     private FileInputStream fis;
     private DataInputStream in;
     private BufferedReader br;
@@ -47,12 +52,13 @@ public class IdfReader
     private HashMap<String, Integer> nodeIdMap;
     private HashMap<String, EdgeIteratorState> edgeMap;
     
-    private final static String location = "./tmp/graphstorage";
+    protected final Directory location;
     private final static EncodingManager encodingManager = new EncodingManager("CAR");
     
-    private final DAType dataAccessType = DAType.MMAP;
+    private final DAType dataAccessType = new DAType(DAType.RAM_STORE, true);
     private LocationIndex locationIndex;
     private final int snapResolution = 50;
+    private final int rowsToCommit = 2;
         
     private enum ItemType {
         Node,
@@ -82,14 +88,32 @@ public class IdfReader
         return locationIndex;
     }
         
-    public IdfReader(String IdfFile) throws IOException {
+    public void doIdf2Graph(String IdfFile) throws IOException
+    {
+        if (encodingManager == null)
+            throw new IllegalStateException("Encoding manager not set.");
+
+        StopWatch sw1 = new StopWatch().start();
+        open(IdfFile);
+        loadGraph();
+        sw1.stop();
+        
+        StopWatch sw2 = new StopWatch().start();
+        initLocationIndex();  
+        sw2.stop();
+        
+        logger.info("INTREST import took " + (int) sw1.getSeconds() + " seconds.");
+        logger.info("Location Index built in " + (int) sw2.getSeconds() + " seconds.");
+        logger.info("Total seconds: " + (int) (sw1.getSeconds() + sw2.getSeconds()));
+    }
+    
+    public IdfReader(GraphStorage storage) throws IOException {
         
         nodeIdMap = new HashMap<String, Integer>();
         edgeMap = new HashMap<String, EdgeIteratorState>();
-    
-        open(IdfFile);
-        loadGraph();
-        initLocationIndex();   
+        
+        graph = storage;
+        location = storage.getDirectory();
     }
     
     private void open(String filename) throws IOException {
@@ -102,14 +126,9 @@ public class IdfReader
     
     private void initLocationIndex()
     {
-        Directory dir = new MMapDirectory(location);
-        locationIndex = new LocationIndexTree(graph, dir);
+        locationIndex = new LocationIndexTree(graph, location);
         locationIndex.setResolution(snapResolution).prepareIndex();
         locationIndex.flush();
-//        if (!locationIndex.loadExisting())
-//        {
-//            throw new IllegalStateException("location2id index cannot be loaded!");
-//        }
     }
     
     private void loadGraph() throws IOException {
@@ -121,11 +140,11 @@ public class IdfReader
         PointList edgeVertices = new PointList();
         String edgeKey = "";
     
-        GraphBuilder gb = new GraphBuilder(encodingManager).setLocation(location).setMmap(true);
+        //GraphBuilder gb = new GraphBuilder(encodingManager).setLocation(location).setMmap(false);
       
         //GHDirectory dir = new GHDirectory(location, dataAccessType);
         
-        graph = gb.create();
+        //graph = gb.create();
         
         //Read File
         while ((line = br.readLine()) != null) {
@@ -133,62 +152,62 @@ public class IdfReader
             if(!readsData && line.endsWith("tbl;Node")) {
                 //Reached Node Table Section
                 table = ItemType.Node;
-                System.out.println("Starting to read nodes!");
+                logger.info("Starting to read nodes!");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;Link")) {
                 //Reached Link Table Section
                 table = ItemType.Link;
-                System.out.println("Graph has ".concat(String.valueOf(graph.getNodes())).concat(" nodes."));
-                System.out.println("Starting to read links!");
+                logger.info("Graph has ".concat(String.valueOf(graph.getNodes())).concat(" nodes."));
+                logger.info("Starting to read links!");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;LinkCoordinate")) {
                 //Reached LinkCoordinate Table Section
                 table = ItemType.LinkCoordinate;
-                System.out.println("Starting to read LinkCoordinates");
+                logger.info("Starting to read LinkCoordinates");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;LinkUse")) {
                 //Reached LinkUse Table Section
                 table = ItemType.LinkUse;
-                System.out.println("Starting to read LinkUses");
+                logger.info("Starting to read LinkUses");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;BikeHike")) {
                 //Reached LinkUse Table Section
                 table = ItemType.BikeHike;
-                System.out.println("Starting to read BikeHike");
+                logger.info("Starting to read BikeHike");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;TurnEdge")) {
                 //Reached LinkUse Table Section
                 table = ItemType.TurnEdge;
-                System.out.println("Starting to read TurnEdge");
+                logger.info("Starting to read TurnEdge");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;TurnUse")) {
                 //Reached TurnUse Table Section
                 table = ItemType.TurnUse;
-                System.out.println("Starting to read TurnUse");
+                logger.info("Starting to read TurnUse");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;Event")) {
                 //Reached Event Table Section
                 table = ItemType.Event;
-                System.out.println("Starting to read Events");
+                logger.info("Starting to read Events");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;StreetNames")) {
                 //Reached StreetNames Table Section
                 table = ItemType.StreetNames;
-                System.out.println("Starting to read StreetNames");
+                logger.info("Starting to read StreetNames");
                 readsData = true;
                 
             } else if (!readsData && line.endsWith("tbl;Link2StreetNames")) {
                 //Reached Link2StreetNames Table Section
                 table = ItemType.Link2StreetNames;
-                System.out.println("Starting to read Link2StreetNames");
+                logger.info("Starting to read Link2StreetNames");
                 readsData = true;
 
             } else if (readsData && table == ItemType.Node && line.startsWith("rec;")) {
@@ -275,7 +294,7 @@ public class IdfReader
                     
                     
                 } catch(NullPointerException ex) {
-                    System.out.println("WARN: Node Id connected by Edge not found");
+                    logger.warn("Either Node Id " + splitLine[4] + " or " + splitLine[5] + " connected by Edge Id " + splitLine[1] + " not found");
                 }
                                 
                 rowcount++;
@@ -443,9 +462,9 @@ public class IdfReader
                 splitLine = line.split(";");
                 
                 if(rowcount != Integer.parseInt(splitLine[1])) {
-                    System.out.println(String.format("WARN: Read %d records, but should be %s", rowcount, splitLine[1]));
+                    logger.warn(String.format("Read %d records, but should be %s", rowcount, splitLine[1]));
                 } else {
-                    System.out.println(String.format("INFO: Read %d records which equals %s rows as expected", rowcount, splitLine[1]));
+                    logger.info(String.format("Read %d records which equals %s rows as expected", rowcount, splitLine[1]));
                 }
                 
                 //Finish linkcoordinates reading
@@ -463,14 +482,13 @@ public class IdfReader
                 
             }         
             
-            if((rowcount > 0) && ((rowcount % 100000) == 0)) {
-                System.out.println("Read ".concat(String.valueOf(rowcount)).concat(" lines so far."));
-                //graph.flush();
+            if((rowcount > 0) && ((rowcount % rowsToCommit) == 0)) {
+                logger.info("Read ".concat(String.valueOf(rowcount)).concat(" lines so far."));
+                graph.flush();
             }
         }          
-        
+
         graph.flush();
-        graph = gb.load();
                 
         //Close the input stream
         in.close();
@@ -479,8 +497,10 @@ public class IdfReader
 
     void close()
     {
-        if (graph != null)
+        if (graph != null){
+            graph.flush();
             graph.close();
+        }
 
         if (locationIndex != null)
             locationIndex.close();
